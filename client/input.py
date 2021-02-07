@@ -17,7 +17,7 @@ class Input:
         initializes the input functions
         """
         # TODO, separate definition of structure type into a different method
-        # TODO, add dead structural weights to input loads as well?
+        # TODO, add dead structural weights to input loads as well (optional)?
         # input arguments
         self.i_d = None                             # Dictionary containing the original input arguments    dict
         self.case_id = None                         # Case ID for storing the data                          str
@@ -84,6 +84,7 @@ class Input:
             else:
                 self.masses[storey] = q_floor * A_floor / 9.81
                 self.pdelta_loads[storey] = q_floor*(sum(self.spans_y)-self.bay_perp)*sum(self.spans_x)
+        print(self.masses)
         self.o_th = self.i_d['mode_red'][0]
         self.fy = self.i_d['fy'][0]
         self.elastic_modulus_steel = self.i_d['Es'][0]

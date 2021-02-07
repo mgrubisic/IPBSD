@@ -178,7 +178,7 @@ class Detailing:
                     raise ValueError("[EXCEPTION] Wrong option for ensuring symmetry, must be max, mean or min")
         return MbiPos, MbiNeg, Mci, Nci, NciNeg
 
-    def ensure_local_ductility(self, b, h, reinforcement, relation, st, bay, eletype, oppReinf=None):
+    def ensure_local_ductility(self, b, h, reinforcement, relation, st, bay, eletype, oppReinf=None, pflag=True):
         """
         Local ductility checks according to Eurocode 8
         :param b: float                             Width of element
@@ -189,6 +189,7 @@ class Detailing:
         :param bay: int                             Bay level
         :param eletype: str                         Element type, beam or column
         :param oppReinf: float                      Reinforcement of opposite direction
+        :param pflag: bool                          Print out warnings
         :return: dict                               M-phi outputs to be stored
         """
         # Behaviour factor, for frame systems assuming regularity in elevation
@@ -260,11 +261,12 @@ class Detailing:
             return data
 
         elif ro_max < ro_prime:
-            print(f"[WARNING] Cross-section of {eletype} element at storey {st} and bay {bay} should be increased! "
-                  f"ratio: {ro_prime * 100:.2f}%")
-            self.WARN_ELE_MAX = True
-            self.WARN_ELE_MIN = False
-            self.WARNING_MAX = True
+            if pflag:
+                print(f"[WARNING] Cross-section of {eletype} element at storey {st} and bay {bay} should be increased! "
+                      f"ratio: {ro_prime * 100:.2f}%")
+                self.WARN_ELE_MAX = True
+                self.WARN_ELE_MIN = False
+                self.WARNING_MAX = True
             return None
 
         else:
@@ -300,6 +302,126 @@ class Detailing:
         AsTotal = AsPos + AsNeg
         distributions = [AsPos / AsTotal, AsNeg / AsTotal]
         return AsTotal, distributions
+
+    def design_gravity(self):
+        """
+        designs gravity elements using demands from ELFM and optimal solution, uses moment_curvature_rc
+        :return: dict                           Designed element details from the moment-curvature relationship
+        """
+        # TODO, assumption, all beams independent of direction within a storey are of the same section
+        # Get only the peak values for moments and moment/axial forces for beams and columns
+        demands = self.demands
+        b = np.zeros((self.nst, 4))
+        c = np.zeros((self.nst, 2))
+
+        for st in range(self.nst):
+            cnt = 0
+            for eletype in demands:
+                if eletype.startswith("Beam"):
+                    for s in demands[eletype]["M"]:
+                        b[st][cnt] = np.max(np.abs(demands[eletype]["M"][s][st, :, :]))
+                        cnt += 1
+            # Columns
+            c[st][0] = np.max(np.abs(demands["Columns"]["M"][st, :, :]))
+            idxs = list(zip(*np.where(np.abs(demands["Columns"]["M"][st, :, :]) == c[st][0])))[0]
+            c[st][1] = np.abs(demands["Columns"]["N"][st, idxs[0], idxs[1]])
+
+        # Maximum moment demands for beams at each storey level
+        beam_demands = np.max(b, axis=0)
+        # Column demand at each storey level. Moment; Axial load
+        column_demands = c
+
+        # Initialize hinge models
+        model = {"Beams": {}, "Columns": {}}
+        hinge_models = {"Beams": {}, "Columns": {}}
+
+        for st in range(self.nst):
+            m_target = beam_demands[st]
+            b = self.sections[f"bx{st + 1}"]
+            h = self.sections[f"hx{st + 1}"]
+
+            AsTotal, distributions = self.get_rebar_distribution(b, h, self.rebar_cover, m_target, m_target)
+
+            mphiPos = MomentCurvatureRC(b, h, m_target, d=self.rebar_cover, young_mod_s=self.young_mod_s,
+                                        k_hard=self.k_hard, AsTotal=AsTotal, distAs=distributions)
+            model["Beams"][f"S{st + 1}"] = mphiPos.get_mphi()
+            hinge_models["Beams"][f"S{st + 1}"] = model["Beams"][f"S{st + 1}"][4]
+
+            model_temp = self.ensure_local_ductility(b, h, model["Beams"][f"S{st + 1}"][0]["reinforcement"], mphiPos,
+                                                     None, None, eletype="Beam",
+                                                     oppReinf=model["Beams"][f"S{st + 1}"][0]["reinforcement"],
+                                                     pflag=False)
+
+            if model_temp is not None:
+                model["Beams"][f"S{st + 1}"] = model_temp
+                hinge_models["Beams"][f"S{st + 1}"] = model_temp[4]
+
+        # Design of columns
+        for st in range(self.nst):
+                b = h = self.sections[f"hi{st + 1}"]
+                # Design bending moment
+                m_target = column_demands[st][0]
+                # Design compressive internal axial force
+                nc_design = column_demands[st][1]
+
+                # Number of reinforcement layers based on section height (may be adjusted manually)
+                nlayers = 0 if h <= 0.3 else 1 if (0.3 < h <= 0.55) else 2
+                # Assuming contraflexure at 0.6 of height
+                z = 0.6 * self.heights[st]
+
+                mphi = MomentCurvatureRC(b, h, m_target, length=z, p=-nc_design, nlayers=nlayers,
+                                         d=self.rebar_cover,
+                                         young_mod_s=self.young_mod_s, k_hard=self.k_hard,
+                                         soft_method="Collins")
+
+                model["Columns"][f"S{st + 1}"] = mphi.get_mphi()
+
+                hinge_models["Columns"][f"S{st + 1}"] = model["Columns"][f"S{st + 1}"][4]
+
+                '''Local ductility requirement checks (following Eurocode 8 recommendations)'''
+                model_temp = self.ensure_local_ductility(b, h, model["Columns"][f"S{st + 1}"][0]["reinforcement"], mphi,
+                                                         None, None, eletype="Column", pflag=False)
+
+                if model_temp is not None:
+                    model["Columns"][f"S{st + 1}"] = model_temp
+                    hinge_models["Columns"][f"S{st + 1}"] = model_temp[4]
+
+        # Get hinge model information in DataFrame
+        columns = ["Element", "Storey", "b", "h", "coverNeg", "coverPos", "lp", "phi1Neg", "phi2Neg", "phi3Neg",
+                   "m1Neg", "m2Neg", "m3Neg", "phi1", "phi2", "phi3", "m1", "m2", "m3"]
+
+        numericCols = ["Storey", "b", "h", "coverNeg", "coverPos", "lp", "phi1Neg", "phi2Neg", "phi3Neg",
+                       "m1Neg", "m2Neg", "m3Neg", "phi1", "phi2", "phi3", "m1", "m2", "m3"]
+
+        hinge_models = pd.DataFrame(columns=columns)
+        for ele in model:
+            m = model[ele]
+            for j in m:
+                lp = m[j][0]["lp"]
+                st = int(j[1])
+
+                if ele.lower() == "beams":
+                    temp = np.array([ele[:-1], st, model[ele][j][0]["b"], model[ele][j][0]["h"],
+                                     model[ele][j][0]["cover"], model[ele][j][0]["cover"], lp])
+                    phiNeg = model[ele][j][4]["phi"][1:]
+                    mNeg = model[ele][j][4]["m"][1:]
+                    phiPos = model[ele][j][4]["phi"][1:]
+                    mPos = model[ele][j][4]["m"][1:]
+                else:
+                    temp = np.array([ele[:-1], st, model[ele][j][0]["b"], model[ele][j][0]["h"],
+                                     model[ele][j][0]["cover"], model[ele][j][0]["cover"], lp])
+                    phiNeg = phiPos = model[ele][j][4]["phi"][1:]
+                    mNeg = mPos = model[ele][j][4]["m"][1:]
+
+                data = np.concatenate((temp, phiNeg, mNeg, phiPos, mPos)).reshape(1, len(columns))
+
+                # Concatenate into the DataFrame
+                hinge_models = hinge_models.append(pd.DataFrame(data=data, columns=columns), ignore_index=True)
+
+        for i in numericCols:
+            hinge_models[i] = pd.to_numeric(hinge_models[i])
+
+        return hinge_models
 
     def design_elements(self, modes=None):
         """

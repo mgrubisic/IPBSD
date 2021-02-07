@@ -72,12 +72,14 @@ class Action:
 
             # Check for gravity loads
             if self.analysis == 3:
-                grav_loads = np.array([])
-                for n in range(self.nst):
-                    if n == self.nst - 1:
-                        grav_loads = np.append(grav_loads, self.gravity_loads['roof'])
-                    else:
-                        grav_loads = np.append(grav_loads, self.gravity_loads['floor'])
+                grav_loads = None
+                if self.gravity_loads is not None:
+                    grav_loads = np.array([])
+                    for n in range(self.nst):
+                        if n == self.nst - 1:
+                            grav_loads = np.append(grav_loads, self.gravity_loads['roof'])
+                        else:
+                            grav_loads = np.append(grav_loads, self.gravity_loads['floor'])
                 d["G"] = grav_loads
             return d
 

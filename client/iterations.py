@@ -6,7 +6,11 @@ from numpy.linalg import lstsq
 
 class Iterations:
     def __init__(self, ipbsd, sols, spo_file, target_MAFC, analysis_type, damping, num_modes, fstiff, rebar_cover,
+<<<<<<< Updated upstream
                  outputPath):
+=======
+                 outputPath, gravity_loads, flag3d=False):
+>>>>>>> Stashed changes
         """
         Initialize
         """
@@ -23,10 +27,15 @@ class Iterations:
         self.outputPath = outputPath
         self.omegaWarn = False
         self.warnT = True
-        self.spo_validate = True
+        self.spo_validate = False
         self.model_outputs = None
         self.period_to_use = None
         self.modified = "spo"
+<<<<<<< Updated upstream
+=======
+        self.gravity_loads = gravity_loads
+        self.flag3d = flag3d
+>>>>>>> Stashed changes
 
     def compare_value(self, x, y, tol=0.05):
         """
@@ -312,7 +321,7 @@ class Iterations:
         print("[SUCCESS] MAFC was validated")
         return part_factor, m_star, cy, dy, spo2ida_data
 
-    def iterate_phase_4(self, cy, dy, sa, period_range, solution, modes, table_sls, rerun=False):
+    def iterate_phase_4(self, cy, dy, sa, period_range, solution, modes, table_sls, rerun=False, direction=0):
         """
         Runs phase 4 of the framework
         :param cy: float                                Spectral acceleration at yield in g
@@ -323,6 +332,7 @@ class Iterations:
         :param modes: dict                              Periods and normalized modal shapes of the solution
         :param table_sls: DataFrame                     Table with SLS parameters
         :param rerun: bool                              Perform reruns for stiffness correction or not
+        :param direction: int                           0 for X, 1 for Y
         :return forces: DataFrame                       Acting forces
         :return demands: dict                           Demands on the structural elements
         :return details: dict                           Designed element properties from the moment-curvature
@@ -344,7 +354,17 @@ class Iterations:
             corr = self.ipbsd.get_correlation_matrix(modes["Periods"], self.num_modes, damping=self.damping)
         else:
             corr = None
+<<<<<<< Updated upstream
         forces = self.ipbsd.get_action(solution, cy, pd.DataFrame.from_dict(table_sls), self.ipbsd.data.w_seismic,
+=======
+
+        # Gravity loads
+        if self.flag3d:
+            seismic_solution = solution["x_seismic"] if direction == 0 else solution["y_seismic"]
+        else:
+            seismic_solution = solution
+        forces = self.ipbsd.get_action(seismic_solution, cy, pd.DataFrame.from_dict(table_sls), self.gravity_loads,
+>>>>>>> Stashed changes
                                        self.analysis_type, self.num_modes, modes, modal_sa=se_rmsa)
 
         print("[SUCCESS] Actions on the structure for analysis were estimated")
@@ -354,7 +374,11 @@ class Iterations:
 
         """Perform ELF analysis"""
         def analyze(hinge=None):
+            if hinge is None and self.flag3d:
+                hinge = {"x_seismic": None, "y_seismic": None, "gravity": None}
+
             if self.analysis_type == 1:
+<<<<<<< Updated upstream
                 demands = self.ipbsd.run_muto_approach(solution, list(forces["Fi"]), self.ipbsd.data.h,
                                                        self.ipbsd.data.spans_x)
             elif self.analysis_type == 2:
@@ -363,19 +387,42 @@ class Iterations:
             elif self.analysis_type == 3:
                 demands = self.ipbsd.run_analysis(self.analysis_type, solution, list(forces["Fi"]), list(forces["G"]),
                                                   fstiff=self.fstiff, hinge=hinge)
+=======
+                if direction == 0:
+                    spans = self.ipbsd.data.spans_x
+                else:
+                    spans = self.ipbsd.data.spans_y
+
+                demands = self.ipbsd.run_muto_approach(solution, list(forces["Fi"]), self.ipbsd.data.h, spans)
+            elif self.analysis_type == 2:
+                demands = self.ipbsd.run_analysis(self.analysis_type, solution, list(forces["Fi"]), fstiff=self.fstiff,
+                                                  hinge=hinge, direction=direction)
+            elif self.analysis_type == 3:
+                demands = self.ipbsd.run_analysis(self.analysis_type, solution, list(forces["Fi"]), list(forces["G"]),
+                                                  fstiff=self.fstiff, hinge=hinge, direction=direction)
+>>>>>>> Stashed changes
             elif self.analysis_type == 4 or self.analysis_type == 5:
                 demands = {}
                 for mode in range(self.num_modes):
                     demands[f"Mode{mode + 1}"] = self.ipbsd.run_analysis(self.analysis_type, solution,
                                                                          list(forces["Fi"][:, mode]),
+<<<<<<< Updated upstream
                                                                          fstiff=self.fstiff, hinge=hinge)
+=======
+                                                                         fstiff=self.fstiff, hinge=hinge,
+                                                                         direction=direction)
+>>>>>>> Stashed changes
 
                 demands = self.ipbsd.perform_cqc(corr, demands)
 
                 if self.analysis_type == 5:
                     demands_gravity = self.ipbsd.run_analysis(self.analysis_type, solution,
                                                               grav_loads=list(forces["G"]),
+<<<<<<< Updated upstream
                                                               fstiff=self.fstiff, hinge=hinge)
+=======
+                                                              fstiff=self.fstiff, hinge=hinge, direction=direction)
+>>>>>>> Stashed changes
                     # Combining gravity and RSMA results
                     for eleType in demands_gravity.keys():
                         for dem in demands_gravity[eleType].keys():
@@ -395,20 +442,59 @@ class Iterations:
         print("[SUCCESS] Analysis completed and demands on structural elements were estimated.")
 
         """Design the structural elements"""
+        # Details the frame of seismic direction only
+        seismic_demands = demands["x_seismic"] if direction == 0 else demands["y_seismic"]
         details, hinge_models, mu_c, mu_f, warnMax, warnMin, warnings = \
+<<<<<<< Updated upstream
             self.ipbsd.design_elements(demands, solution, modes, dy, cover=self.rebar_cover)
 
         print("[SUCCESS] Section detailing done. Element idealized Moment-Curvature relationships obtained")
+=======
+            self.ipbsd.design_elements(seismic_demands, seismic_solution, modes, dy, cover=self.rebar_cover,
+                                       direction=direction)
+
+        if self.flag3d:
+            # Detail the gravity frames in either direction (this could be repetitive)
+            hinge_gravity = self.ipbsd.design_elements(demands["gravity"], solution["gravity"], None, dy,
+                                                       cover=self.rebar_cover, direction=direction, gravity=True)
+        else:
+            hinge_gravity = None
+
+        print("[SUCCESS] Section detailing done. Element idealized Moment-Curvature relationships obtained")
+        print("[EXIT] Force quit!")
+        import sys
+        sys.exit()
+>>>>>>> Stashed changes
         # Rerun elastic analysis with updated stiffness reduction factors for all structural elements
         if rerun:
-            demands = analyze(hinge=hinge_models)
+            if self.flag3d:
+                hinge = {"x_seismic": hinge_models, "y_seismic": None, "gravity": None}
+                demands = analyze(hinge=hinge)
+            else:
+                demands = analyze(hinge=hinge_models)
 
             details, hinge_models, mu_c, mu_f, warnMax, warnMin, warnings = \
+<<<<<<< Updated upstream
                 self.ipbsd.design_elements(demands, solution, modes, dy, cover=self.rebar_cover)
+=======
+                self.ipbsd.design_elements(seismic_demands, solution, modes, dy, cover=self.rebar_cover,
+                                           direction=direction)
+            if self.flag3d:
+                # Detail the gravity frames in either direction (this could be repetitive)
+                hinge_gravity = self.ipbsd.design_elements(demands["gravity"], solution["gravity"], None, dy,
+                                                           cover=self.rebar_cover, direction=direction,
+                                                           gravity=True)
+>>>>>>> Stashed changes
 
             print("[RERUN COMPLETE] Rerun of analysis and detailing complete due to modified stiffness.")
 
-        yield demands
+        if self.flag3d:
+            hinge_models = {"x_seismic": hinge_models, "y_seismic": None, "gravity": hinge_gravity}
+            demands_gravity = demands["gravity"]
+        else:
+            demands_gravity = None
+
+        yield demands, demands_gravity
         yield details, hinge_models, mu_c, mu_f
         yield warnMax, warnMin, warnings
 
@@ -430,6 +516,8 @@ class Iterations:
 
         # There is a high likelihood that Fundamental period and SPO curve shape will not match the assumptions
         # Therefore the first iteration should correct both assumptions (further corrections are likely not to be large)
+        # TODO index of model_periods would change for Y direction, how to also figure out which one is which,
+        #  because x direction might not have an index of 0
         if model_periods[0] > t_upper + model_periods[0] * tol:
             # Period error
             period_error = model_periods[0] - opt_sol["T"]
@@ -463,7 +551,13 @@ class Iterations:
         :return: tuple                          Idealized SPO curve fit (Top displacement vs. Base Shear)
         :return: float                          Overstrength factor
         """
+<<<<<<< Updated upstream
         spoResults = self.ipbsd.spo_opensees(opt_sol, hinge_models, forces, self.fstiff, modalShape)
+=======
+        print("[SPO] Starting SPO analysis")
+        spoResults = self.ipbsd.spo_opensees(opt_sol, hinge_models, forces, self.fstiff, modalShape,
+                                             direction=self.direction)
+>>>>>>> Stashed changes
 
         # Get the idealized version of the SPO curve and create a warningSPO = True if the assumed shape was
         # incorrect
@@ -471,7 +565,12 @@ class Iterations:
 
         # Actual overstrength
         omegaNew = v[1] / vy
-
+        print(spoResults)
+        print(omegaNew)
+        # TODO stop analysis here, SPO not working as of now
+        print("[EXIT] Force quit!")
+        import sys
+        sys.exit()
         # Check if the new overstrength is correct
         if omega * 0.95 <= omegaNew <= omega * 1.05:
             omegaNew = omega
@@ -515,8 +614,84 @@ class Iterations:
 
         return spoResults, [d, v], omegaNew
 
-    def validations(self, opt_sol, modes, sa, period_range, table_sls, t_lower, t_upper, iterate=True, maxiter=20,
-                    omega=None):
+    def generate_initial_solutions(self, opt_sol, opt_modes, omega, sa, period_range, table_sls):
+        """
+        Master file to run for each direction/iteration
+        :return:
+        """
+        # Call the iterations function (iterations have not yet started though)
+        # 3D option
+        frames = ["x", "y"]
+        # Initialize dictionary for storing design outputs
+        design_outputs = {"x": {}, "y": {}}
+        demands_gravity = {}
+
+        for i in frames:
+
+            solution = opt_sol[f"{i}_seismic"]
+            modes = opt_modes[i]
+            table = table_sls[i]
+            direction = 0 if i == "x" else 1
+
+            if i == "x":
+                # Applying lateral loads in X direction
+                print("[INITIATE] Designing frame in X direction!")
+            else:
+                # Applying lateral loads in Y direction
+                print("[INITIATE] Designing frame in Y direction!")
+
+            # Initialize period to use
+            self.period_to_use = None
+
+            # Generate initial solutions for both directions
+            # For each primary direction of building, apply lateral loads and design the structural elements
+            print("[PHASE] Commencing phase 3...")
+            gamma, mstar, cy, dy, spo2ida_data = self.iterate_phase_3(solution, omega)
+
+            """Get action and demands"""
+            print("[PHASE] Commencing phase 4...")
+            phase_4 = self.iterate_phase_4(cy, dy, sa, period_range, opt_sol, modes, table, direction=direction)
+            forces = next(phase_4)
+            demands, demands_gravity[i] = next(phase_4)
+            details, hinge_models, hard_ductility, fract_ductility = next(phase_4)
+            warnMax, warnMin, warnings = next(phase_4)
+
+            # Append information to design solutions
+            design_outputs[i]["forces"] = forces
+            design_outputs[i]["demands"] = demands
+            design_outputs[i]["details"] = details
+            design_outputs[i]["hinge_models"] = hinge_models
+            design_outputs[i]["warnings"] = {"wanrMax": warnMax, "warnMin": warnMin, "warnings": warnings}
+
+        # Detail the gravity frames in either direction
+        hinge_gravity = self.ipbsd.design_elements(demands_gravity, opt_sol["gravity"], None, None,
+                                                   cover=self.rebar_cover, direction=0, gravity=True)
+        design_outputs["gravity"]["hinge_models"] = hinge_gravity
+
+        # Gravity design of gravity frames
+        print("[EXIT] Force quit!")
+        import sys
+        sys.exit()
+
+        return design_outputs
+
+    def run_iterations_for_3d(self, design_outputs, period_limits, opt_sol, opt_modes, sa, period_range, table_sls,
+                              iterate=True, maxiter=20, omega=None):
+
+        for i in ["x", "y"]:
+
+            table = table_sls[i]
+            periods = period_limits[i]
+            self.validations(opt_sol, opt_modes, sa, period_range, table, periods, iterate=iterate, maxiter=maxiter,
+                             omega=omega, direction=i, initial_design_sols=design_outputs)
+
+            # TODO stop analysis here
+            print("[EXIT] Force quit!")
+            import sys
+            sys.exit()
+
+    def validations(self, opt_sol, modes, sa, period_range, table_sls, period_limits, iterate=True, maxiter=20,
+                    omega=None, direction="x", initial_design_sols=None):
         """
         Runs the iterations
         :param opt_sol: DataFrame                       Optimal solution (design solution)
@@ -524,11 +699,12 @@ class Iterations:
         :param sa: ndarray                              Spectral accelerations at SLS
         :param period_range: ndarray                    Periods at SLS
         :param table_sls: dict                          Outputs of DBD at SLS
-        :param t_lower: float                           Lower period
-        :param t_upper: float                           Upper period
+        :param period_limits: list                      Lower and upper period bounds
         :param iterate: bool                            Whether iterations to seek for better solutions are necessary
         :param maxiter: int                             Maximum number of iterations before the framework halts
         :param omega: float                             Overstrength ratio
+        :param direction: str                           Direction of action
+        :param initial_design_sols: dict                Initial design solutions (for 3D approach only)
         :return: ipbsd_outputs: dict                    IPBSD outputs to cache
         :return: spo2ida_data: dict                     SPO2IDA outputs to cache
         :return: opt_sol: df.Series                     Optimal solution to cache
@@ -570,20 +746,31 @@ class Iterations:
         5. Create nonlinear model and run static pushover analysis (SPO shape and overstrength might change here)
         ---- Fourth correction: if SPO shape or overstrength change, rerun from 1 to 5
         '''
+        if not self.flag3d:
+            # 2D frame consideration only
+            # Initialize period to use
+            self.period_to_use = None
 
-        # Initialize period to use
-        self.period_to_use = None
+            # Generate initial solutions for both directions
+            # For each primary direction of building, apply lateral loads and design the structural elements
+            print("[PHASE] Commencing phase 3...")
+            gamma, mstar, cy, dy, spo2ida_data = self.iterate_phase_3(opt_sol, omega)
 
-        print("[PHASE] Commencing phase 3...")
-        gamma, mstar, cy, dy, spo2ida_data = self.iterate_phase_3(opt_sol, omega)
+            """Get action and demands"""
+            print("[PHASE] Commencing phase 4...")
+            phase_4 = self.iterate_phase_4(cy, dy, sa, period_range, opt_sol, modes, table_sls)
+            forces = next(phase_4)
+            demands, demands_gravity = next(phase_4)
+            details, hinge_models, hard_ductility, fract_ductility = next(phase_4)
+            warnMax, warnMin, warnings = next(phase_4)
 
-        """Get action and demands"""
-        print("[PHASE] Commencing phase 4...")
-        phase_4 = self.iterate_phase_4(cy, dy, sa, period_range, opt_sol, modes, table_sls)
-        forces = next(phase_4)
-        demands = next(phase_4)
-        details, hinge_models, hard_ductility, fract_ductility = next(phase_4)
-        warnMax, warnMin, warnings = next(phase_4)
+        else:
+            # Initial design solutions for 3D approach
+            forces = initial_design_sols[direction]["forces"]
+            hinge_models = {"x_seismic": initial_design_sols["x"]["hinge_models"],
+                            "y_seismic": initial_design_sols["y"]["hinge_models"],
+                            "gravity": initial_design_sols["gravity"]["hinge_models"]}
+
         # Reading SPO parameters from file
         read = True
 
@@ -597,7 +784,8 @@ class Iterations:
             """
             # Start with the correction of SPO curve shape. Also, recalculate the mode shape of new design solution
             cnt = 0
-            periodCache = opt_sol["T"]
+            if self.flag3d:
+                periodCache = opt_sol[f"{direction}_seismic"]["T"]
 
             # Correction for period
             """Create an OpenSees model and run modal analysis"""
@@ -609,16 +797,17 @@ class Iterations:
             # Iterate until all conditions are met
             while (self.warnT or warnMax or not self.spo_validate or self.omegaWarn) and cnt + 1 <= maxiter:
 
-                # Iterations related to SPO corrections
-                if not self.spo_validate or self.omegaWarn:
+                # Iterations related to SPO corrections (skip first iteration, before runnning SPO)
+                if (not self.spo_validate or self.omegaWarn) and cnt > 0:
                     # Reruns
                     print("[RERUN] Rerun for SPO shape correction...")
                     # Calculates the new cy for the corrected SPO shape, period, Overstrength and c-s
                     gamma, mstar, cy, dy, spo2ida_data = self.iterate_phase_3(opt_sol, omega, read=read)
+
                     # Run elastic analysis and detail the structure
                     phase_4 = self.iterate_phase_4(cy, dy, sa, period_range, opt_sol, modes, table_sls)
                     forces = next(phase_4)
-                    demands = next(phase_4)
+                    demands, demands_gravity = next(phase_4)
                     details, hinge_models, hard_ductility, fract_ductility = next(phase_4)
                     warnMax, warnMin, warnings = next(phase_4)
 
@@ -630,7 +819,7 @@ class Iterations:
                     modes["Modes"][0, :] = np.array(modalShape)
                     print("[RERUN COMPLETE] Rerun for SPO shape correction.")
 
-                # Iterations related to Period corrections
+                # Iterations related to Period corrections, only if run MA indicated T1 not being within period range
                 cntTrerun = 0
                 while self.warnT:
                     if cntTrerun > 0:
@@ -643,7 +832,7 @@ class Iterations:
                     gamma, mstar, cy, dy, spo2ida_data = self.iterate_phase_3(opt_sol, omega, read=read)
                     phase_4 = self.iterate_phase_4(cy, dy, sa, period_range, opt_sol, modes, table_sls, rerun=rerun)
                     forces = next(phase_4)
-                    demands = next(phase_4)
+                    demands, demands_gravity = next(phase_4)
                     # TODO, increasing cover results in issues, fix (maybe fixed with recent changes, verify)
                     details, hinge_models, hard_ductility, fract_ductility = next(phase_4)
                     warnMax, warnMin, warnings = next(phase_4)
@@ -667,7 +856,7 @@ class Iterations:
                         print("[RERUN COMPLETE] Rerun for fundamental period correction")
 
                 # Exiting while warnT
-                # Correction if unsatisfactory detailing, modifying only towards increasing c-s
+                # Correction if unsatisfactory detailing, modifying only towards increasing c-s, based on phase 4
                 if warnMax:
                     """Look for a different solution"""
                     # Get the new design solution and the modal shapes
@@ -678,9 +867,14 @@ class Iterations:
                 vy_assumed = cy * gamma * mstar * 9.81
                 omegaCache = omega
                 spoShapeCache = self.spo_shape
-
+                print(cy, vy_assumed, mstar)
                 spoResults, spo_idealized, omega = self.run_spo(opt_sol, hinge_models, forces, vy_assumed, modalShape,
                                                                 omega)
+
+                # TODO stop analysis here
+                print("[EXIT] Force quit!")
+                import sys
+                sys.exit()
 
                 # Record OpenSees outputs
                 self.model_outputs = {"MA": {"T": model_periods, "modes": modalShape, "gamma": gamma, "mstar": mstar},

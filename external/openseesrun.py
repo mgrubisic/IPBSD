@@ -39,6 +39,7 @@ class OpenSeesRun:
         :param analysis: int                        Analysis type
         :param lat_action: list                     Acting lateral loads in kN
         :param grav_loads: list                     Acting gravity loads in kN/m
+        :return: dict                               Demands on structural elements
         """
         self.wipe()
         # Create the model
@@ -73,15 +74,19 @@ class OpenSeesRun:
 
         # Geometric transformations
         op.geomTransf("Linear", 1)
+
         # Add the column elements
-        col_id = 0
         columns = []
         for bay in range(1, int(self.i_d.n_bays + 2)):
             for st in range(1, int(self.i_d.nst + 1)):
                 # Parameters for elastic static analysis
                 previous_st = st - 1
+<<<<<<< Updated upstream
                 col_id += 1
                 if bay == 1 or bay == 1 + int(self.i_d.n_bays):
+=======
+                if bay == 1 or bay == 1 + int(nbays):
+>>>>>>> Stashed changes
                     b_col = h_col = self.cs[f'he{st}']
                 else:
                     b_col = h_col = self.cs[f'hi{st}']
@@ -111,7 +116,6 @@ class OpenSeesRun:
                     self.base_cols.append(int(f"2{bay}{st}"))
 
         # Add the beam elements
-        beam_id = 0
         beams = []
         for bay in range(1, int(self.i_d.n_bays + 1)):
             for st in range(1, int(self.i_d.nst + 1)):
@@ -119,7 +123,6 @@ class OpenSeesRun:
                 next_bay = bay + 1
                 b_beam = self.cs[f'b{st}']
                 h_beam = self.cs[f'h{st}']
-                beam_id += 1
                 et = int(f"1{bay}{st}")
                 inode = int(f"{bay}{st}")
                 jnode = int(f"{next_bay}{st}")
@@ -618,7 +621,7 @@ class OpenSeesRun:
         op.analyze(10)
         op.loadConst("-time", 0.0)
 
-    def spo_analysis(self, load_pattern=2, mode_shape=None):
+    def spo_analysis(self, load_pattern=1, mode_shape=None):
         """
         Starts static pushover analysis
         :param load_pattern: str                    Load pattern shape for static pushover analysis
@@ -666,7 +669,7 @@ class OpenSeesRun:
         op.system("BandGeneral")
         op.test(testType, tol, iterInit, 0)
         op.algorithm(algorithmType)
-        op.integrator("DisplacementControl", self.spo_nodes[-1], 1.5, 1.5/nsteps)
+        op.integrator("DisplacementControl", self.spo_nodes[-1], 1, 1.5/nsteps)
         op.analysis("Static")
 
         '''Seek for a solution using different test conditions or algorithms'''
